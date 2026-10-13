@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Poll the VPS eye tracking glasses at 30 Hz and print the current gaze point.
+Poll the VPS eye tracking glasses at 30 Hz and log the current gaze point.
 
 The unit pushes gaze data as an RTSP/RTP stream of KLV units (see
-livestream-api-documentation.pdf, section 2.4.3). A background thread receives
+doc/livestream-api-documentation.pdf, section 2.4.3). A background thread receives
 that stream and keeps the latest sample; the main loop polls it every 1/30 s
-and prints it as:
+and appends it to gaze.txt in the output directory as:
 
     x=..., y=..., timestamp=...
 
@@ -13,8 +13,9 @@ x/y are gaze_2d (front camera pixel coordinates), timestamp is
 glasses_timestamp (u64 nanoseconds, monotonic since boot of the glasses).
 A tick is skipped when no new sample arrived since the previous one.
 
-For every printed sample, the latest front camera frame is saved as a freeze
-frame screenshot_<timestamp>.jpg (same glasses_timestamp as printed). The front
+For every logged sample, the latest front camera frame is saved next to
+gaze.txt as a freeze frame screenshot_<timestamp>.jpg (same glasses_timestamp
+as logged). The front
 camera stream (section 2.4.1) is decoded by an ffmpeg subprocess.
 
 Usage:
@@ -198,7 +199,7 @@ def main():
     ap = argparse.ArgumentParser(description="Poll VPS glasses gaze data and print it.")
     ap.add_argument("ip", nargs="?", default="10.42.0.1", help="unit IP (default: 10.42.0.1)")
     ap.add_argument("--rate", type=float, default=30.0, help="polling rate in Hz (default: 30)")
-    ap.add_argument("--outdir", default=".", help="directory for screenshot_<timestamp>.jpg (default: .)")
+    ap.add_argument("--outdir", default=".", help="directory for gaze.txt and screenshot_<timestamp>.jpg (default: .)")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -206,6 +207,10 @@ def main():
     frames.start()
     stream = GazeStream(args.ip)
     stream.start()
+    log = open(os.path.join(args.outdir, "gaze.txt"), "a")
+    print("Welcome to the VPS gaze poller!")
+    print(f"Logging gaze data and screenshots to {os.path.abspath(args.outdir)}")
+    print("Press Ctrl+C to quit.")
     period = 1.0 / args.rate
     last_ts = None
     next_tick = time.monotonic()
@@ -214,7 +219,8 @@ def main():
             sample = stream.poll()
             if sample is not None and sample[2] != last_ts:
                 x, y, ts = sample
-                print(f"x={x:.2f}, y={y:.2f}, timestamp={ts}", flush=True)
+                log.write(f"x={x:.2f}, y={y:.2f}, timestamp={ts}\n")
+                log.flush()
                 frame = frames.poll()
                 if frame is not None:
                     with open(os.path.join(args.outdir, f"screenshot_{ts}.jpg"), "wb") as f:
@@ -231,6 +237,8 @@ def main():
     finally:
         stream.stop()
         frames.stop()
+        log.close()
+        print("\nStopped.")
 
 
 if __name__ == "__main__":
