@@ -218,3 +218,7 @@ __marimo__/
 .streamlit/secrets.toml
 frames/
 .DS_Store
+
+# Output of map_gaze_to_aruco.py
+gaze_animation.mp4
+gaze_mapped.csv

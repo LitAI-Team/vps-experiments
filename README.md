@@ -67,6 +67,100 @@ The glasses provide live streams over RTSP (see `doc/livestream-api-documentatio
 Background threads keep the latest gaze sample and the latest frame. The main loop
 reads both at the polling rate and writes them to disk.
 
+## Mapping gaze to the area between ArUco markers
+
+`map_gaze_to_aruco.py` post-processes recordings. It goes through every directory whose
+name starts with `frame` and maps each gaze point from front camera pixels to the area
+between four ArUco markers (for example, markers placed at the corners of a document
+on screen).
+
+### Marker setup
+
+The markers come from the `DICT_4X4_50` dictionary and must be arranged like this, as
+seen by the camera:
+
+```
+ID 0 ---------- ID 1
+ |               |
+ |  target area  |
+ |               |
+ID 3 ---------- ID 2
+```
+
+The target area is the rectangle bounded by the corner of each marker that faces the
+centre.
+
+### Requirements
+
+- Python 3 with OpenCV and numpy:
+  ```
+  python3 -m venv .venv
+  .venv/bin/pip install opencv-contrib-python-headless numpy
+  ```
+- [ffmpeg](https://ffmpeg.org/) on the `PATH` for H.264 output. Without ffmpeg, the
+  script falls back to OpenCV's own video writer.
+
+### Running
+
+```
+.venv/bin/python map_gaze_to_aruco.py [ROOT] [--width W] [--height H] [--fps F] [--min-markers 3|4]
+```
+
+| Option          | Default                 | Meaning                                              |
+|-----------------|-------------------------|------------------------------------------------------|
+| `ROOT`          | `.`                     | Directory containing the `frame*` directories        |
+| `--width`       | `600`                   | Width of the target area in pixels                   |
+| `--height`      | from the observed ratio | Height of the target area in pixels                  |
+| `--fps`         | screenshot rate         | Frame rate of the animation                          |
+| `--min-markers` | `3`                     | Minimum number of visible markers for a homography   |
+
+### What it does
+
+For each `frame*` directory:
+
+- **Markers:** finds the ArUco markers on every `screenshot_<timestamp>.jpg`.
+- **Gaze lookup:** takes x,y from `gaze.txt` for each screenshot. The timestamps
+  normally match exactly; otherwise the nearest sample within 50 ms is used.
+- **Homography:** maps screenshot pixels to the target area. The area is 600 px wide by
+  default, and its height comes from the width/height ratio seen in the frames.
+  `(0,0)` is the inner corner of marker 0.
+- **Missing markers:** markers are often not detected when the head moves quickly
+  (motion blur). When exactly one marker is missing, the homography is computed from the
+  other three, using marker positions learned from frames where all four were found.
+  With fewer than three markers, the frame is not mapped. Use `--min-markers 4` to map
+  only frames where all four markers were found.
+
+### Output
+
+Two files are written into each directory:
+
+- `gaze_animation.mp4`: all screenshots in sequence, with two panels side by side:
+  - left: the screenshot with the detected markers, the outline of the target area, and
+    the gaze point with a short trail
+  - right: the target area flattened to a straight-on view (with a 15% margin), showing
+    the mapped gaze point, or "no homography" when the frame could not be mapped
+- `gaze_mapped.csv`: one row per screenshot with these columns:
+
+  | Column                  | Meaning                                                    |
+  |-------------------------|------------------------------------------------------------|
+  | `timestamp`             | Screenshot timestamp                                       |
+  | `screenshot`            | Screenshot file name                                       |
+  | `markers`               | IDs of the detected markers, e.g. `0123`                   |
+  | `gaze_x`, `gaze_y`      | Gaze point in screenshot pixels                            |
+  | `target_x`, `target_y`  | Gaze point in target area pixels (empty if not mapped)     |
+  | `target_u`, `target_v`  | Gaze point as a fraction of the target area (0 to 1)       |
+  | `inside`                | `1` if the gaze point lies inside the target area, else `0` |
+
+### Example results
+
+For the recordings in this repository:
+
+| Directory                     | All 4 markers | 3 markers | Not mapped |
+|-------------------------------|---------------|-----------|------------|
+| `frames_30Hz_focus_on_aruco`    | 194           | 89        | 97 / 380   |
+| `frames_30Hz_focus_on_assassin` | 536           | 58        | 84 / 678   |
+| `frames_60Hz_focus_on_aruco`    | 149           | 114       | 334 / 597  |
+
 ## Other files
 
 - `vps_gaze_reader.py`: the vendor's reference reader for the gaze stream, which can also
